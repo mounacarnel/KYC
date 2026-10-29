@@ -1,0 +1,115 @@
+from flask import Flask, request, jsonify
+import json
+import easyocr
+from flask_cors import CORS
+from PIL import Image
+import traceback
+from predict import *
+from ocr_utils import extract_ocr_text, verifier_informations
+from global_score import *
+import warnings
+warnings.filterwarnings("ignore", message=".*pin_memory.*")
+
+app = Flask(__name__)
+
+CORS(app, resources={
+    r"/analyser": {
+        "origins": ["http://localhost:8000", "http://127.0.0.1:8000"]
+    }
+})  # autorise uniquement ton frontend Laravel
+
+reader = easyocr.Reader(['fr', 'en'], gpu=False, download_enabled=True)
+
+@app.route('/')
+def home():
+    return jsonify({"message": "Bienvenue sur l'API Flask de vérification CNI/Recepissé"})
+
+
+@app.route('/analyser', methods=['POST'])
+def analyser():
+    try:
+        # Vérifier que les deux champs sont présents
+        if 'recto' not in request.files or 'verso' not in request.files or 'data' not in request.form:
+            return jsonify({"error": "Images (recto, verso) et données utilisateur (data) sont requis."}), 400
+
+        # Récupérer les deux images
+        file_recto = request.files['recto']
+        file_verso = request.files['verso']
+        json_data = json.loads(request.form['data'])
+
+        # Vérification des champs requis
+        required = ["nom", "prenom", "lieu_de_naisance", "numero", "date_de_naissance"]
+        for key in required:
+            if key not in json_data:
+                return jsonify({"error": f"Champ manquant : {key}"}), 400
+        #if file_verso:
+        #    verso_pil = Image.open(file_verso.stream).convert("RGB")
+        #    verso_pil = corriger_rotation_par_modele(verso_pil)  # ✅ Correction de la rotation
+
+
+        img_pil = Image.open(file_recto.stream).convert("RGB")
+        #img_pil = corriger_rotation_par_modele(img_pil)  # ✅ Correction de la rotation
+
+        img_np = np.array(img_pil)
+        print(f"Type recto: {type(file_recto)}, verso: {type(file_verso)}")
+
+        # Étape 1 : OCR
+        #ocr_texts = extract_ocr_text(img_pil, verso_pil, reader=reader)
+        ocr_texts = extract_ocr_text(file_recto, file_verso, reader=reader)
+        doc_type, confidence = predict_type_by_keyword(ocr_texts)
+
+        if(doc_type == "inconnu"):
+            doc_type, confidence = predict_type(img_np)
+
+        #si la confiance est inferieure à 60% ou si le type nest pas bon, on ne fait pas l'extraction
+        if(doc_type!="others" and confidence > 0.6):
+
+            print("bonne qualité")
+
+            # Infos utilisateur
+            infos = {
+                "nom": json_data.get("nom", ""),
+                "prenom": json_data.get("prenom", ""),
+                "numero": json_data.get("numero", ""),
+                "lieu de naissance": json_data.get("lieu_de_naisance", ""),
+                "date de naissance": json_data.get("date_de_naissance", "")
+            }
+
+            # Étape 3 : Vérification
+            verification, date_expiration = verifier_informations(ocr_texts, infos)
+
+            # Étape 3 : calcul score global
+            score_global = calculer_score_global(verification)
+            interpretation = interpret_score(score_global)
+
+            return jsonify({
+                "type_document": doc_type,
+                "confiance": round(confidence, 3),
+                "score_global": score_global,
+                "interpretation": interpretation,
+                "date_expiration": date_expiration,
+                "verification_informations": verification
+            })
+        elif(doc_type=="others"):
+            print("cest un others")
+            return jsonify({
+                "type_document": doc_type,
+                "confiance": round(confidence, 3),
+                "score_global": -1
+            })
+        else:
+            print("mauvais")
+            return jsonify({
+                "type_document": doc_type,
+                "confiance": round(confidence, 3),
+                "score_global": -2
+            })
+
+    except Exception as e:
+        print("Erreur interne :", traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+
+if __name__ == '__main__':
+    app.run(debug=True,  use_reloader=False)

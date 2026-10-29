@@ -1,0 +1,29 @@
+# Environnement Python
+venv/Lib/
+venv/Scripts/
+venv/Include/
+venv/share/
+venv/pyvenv.cfg
+venv/.git/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets Python
+.env
+.env.*
+!.env.example
+
+# Laravel : dépendances et secrets
+cni_laravel/vendor/
+cni_laravel/node_modules/
+cni_laravel/.env
+cni_laravel/.env.*
+!cni_laravel/.env.example
+
+# Fichiers temporaires
+*.log
+.DS_Store
+Thumbs.db
